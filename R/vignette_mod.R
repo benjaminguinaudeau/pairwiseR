@@ -120,9 +120,7 @@ vignette_server <- function(input, output, session, pair, user){
     con <- pairwiseR::init_db(user = user, path = "data/mp.db")
       removed <- con %>%
             remove_last_action(user = user)
-    
-      message(removed)
-      
+
       shinytoastr::toastr_info(removed)
   })
   

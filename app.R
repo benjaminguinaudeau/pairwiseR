@@ -5,8 +5,9 @@
 # devtools::install_github("systats/shinyuser")
 # install.packages("V8")
 
-n_mp <- 10
-n_comp_pro_user <- 5
+n_mp <- 20 #nrow(pairwiseR::mp)
+n_comp_pro_user <- 10
+par_anal <- 2
 
 library(shiny)
 library(shiny.semantic)
@@ -93,7 +94,7 @@ server <- function(input, output, session){
     logstate <- reactive({ log$state })
     
     pair <- reactive({
-        print(.GlobalEnv$next_pageid_2)
+        
         req(user())
         if(user()$status == 0) return(NULL)
         
@@ -117,15 +118,15 @@ server <- function(input, output, session){
         con <- pairwiseR::init_db(user = user()$username, path = "data/mp.db")
         pair <- isolate(pair())
         
-        if(con %>% get_already(user()$user) %>% nrow %>% magrittr::is_weakly_greater_than(n_comp_pro_user*2)){
+        if(con %>% get_already(user()$user) %>% filter(type == "user") %>% nrow %>% magrittr::is_weakly_greater_than(n_comp_pro_user*2)){
             shinytoastr::toastr_success("Danke für Ihre Teilnahme an unserer Umfrage. Wir werden uns bald melden, um den Vergütungsdetails zu regeln.")
         }
         if(is.null(pair$pageid_1)){
             shinytoastr::toastr_success("Danke für Ihre Teilnahme an unserer Umfrage. Wir werden uns bald melden, um den Vergütungsdetails zu regeln.")
         }
         
-        if(!is.null(pair()$pageid_1)){
-            message(user()$user, " > ", action(), " > ", pageid = pair()$pageid_1, " ", pageid = pair()$pageid_2, "\n")
+        if(!is.null(pair$pageid_1)){
+            cli::cli_alert_success("\n{user()$user} ~ {action()}")
         }
         DBI::dbDisconnect(con) 
     })
@@ -136,11 +137,6 @@ server <- function(input, output, session){
         if(!is.null(.GlobalEnv$next_pageid_2)){.GlobalEnv$next_pageid_2 <- NULL}
         
         con <- pairwiseR::init_db(user = user()$username, path = "data/mp.db") #, force = T
-        
-        # if(action() == "undo"){
-        #     removed <- con %>%
-        #         remove_last_action(user = user()$username)
-        # }
         
         if(!is.null(pair()$pageid_1)){
             if(stringr::str_detect(action(), "ignore")){
@@ -168,8 +164,9 @@ server <- function(input, output, session){
                                pageid_2 = pair()$pageid_2,
                                name_1 = pair()$name_1,
                                pair()$name_2,
+                               par_anal = par_anal,
                                more_left = outcome,
-                               time = lubridate::now(),
+                               time = !!lubridate::now(),
                                con = con
                 )
             }
