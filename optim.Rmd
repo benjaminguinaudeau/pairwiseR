@@ -16,11 +16,37 @@ user <- "test_1"
 par <- 3
 
 
+com <- con %>%
+  tbl("com") %>%
+  filter(user != "benjamin") %>%
+  collect()
+
+DBI::dbWriteTable(con, "com", com, overwrite = T)
+con <- pairwiseR::init_db(user = "benjamin", path = "data/mp.db")
+
+dk <- con %>%
+  tbl("dk") %>%
+  filter(user != "benjamin") %>%
+  collect()
+
+DBI::dbWriteTable(con, "dk", dk, overwrite = T)
+con <- pairwiseR::init_db(user = "benjamin", path = "data/mp.db")
 
 
+already <- tibble(
+  user = "benjamin", 
+  pageid_1 = c(47, 48, 49, 46, 47, 48), 
+  pageid_2 = c(46, 47, 48, 47, 48, 49), 
+  more_left = c(-1, -1, -1, 1, 1, 1)
+)
+con %>% remove_last_action("benjamin")
+con %>%
+  get_already("benjamin") %>%
+  arrange(-time)
 
-
-
+already %>%
+  arrange(time)
+  count(type)
 
 ```
 

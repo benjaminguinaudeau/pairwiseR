@@ -68,21 +68,22 @@ get_already <- function(con, user){
     dplyr::filter(user == {{user}})
 }
 
-
-
 #' get_new_pair
 #' @export
 
 get_new_pair <- function(user = NA, con = NA, pair_mp = NULL, pageid_1 = NULL, pageid_2 = NULL){
   
   dk <- con %>% pairwiseR::get_dk({{user}})
-  already <- con %>% pairwiseR::get_already({{user}})
-  message(nrow(already) %/% 2, " pairs were compared.")
+  already <- con %>% pairwiseR::get_already({{user}}) %>%
+    dplyr::filter_at(dplyr::vars(dplyr::contains("pageid")), ~!.x %in% dk$pageid)
+  message("\n\n")
+  cli::cli_alert_info("Compared manually: {nrow(filter(already, type == 'user')) %/% 2}")
+  cli::cli_alert_info("Compared analytically: {nrow(filter(already, type == 'auto')) %/% 2}")
   
   tmp_mp <- pair_mp %>%
     dplyr::filter_at(dplyr::vars(dplyr::contains("pageid")), ~!.x %in% dk$pageid)
   
-  message((nrow(tmp_mp) - nrow(already)) %/% 2, " pairs yet to compare")
+  cli::cli_alert_info("To compare: {(nrow(tmp_mp) - nrow(already)) %/% 2}")
   
   to_include <- pairwiseR::mp %>%
     dplyr::filter(!pageid %in% dk$pageid) %>%
@@ -97,7 +98,7 @@ get_new_pair <- function(user = NA, con = NA, pair_mp = NULL, pageid_1 = NULL, p
     dplyr::mutate(party_1 = "", party_2 = "")
   
   if(nrow(new_pairs) == 0){
-    message("All pairs have been coded")
+    cli::cli_alert_success("All pairs have been coded")
     return(NULL)
   }
   
@@ -125,7 +126,7 @@ get_new_pair <- function(user = NA, con = NA, pair_mp = NULL, pageid_1 = NULL, p
 #' @export
 
 add_dont_know <- function(user = NA, pageid = NA, name = NA, con = NULL){
-  message(name, " won't appear anymore")
+  cli::cli_alert_danger("Ignored: {name}")
   con %>% DBI::dbWriteTable("dk", tibble::tibble(user, pageid, name, time = as.numeric(lubridate::now())), append = T)
 }
 
@@ -137,30 +138,35 @@ add_comparison <- function(user = NA, pageid_1 = NA, pageid_2 = NA, name_1 = NA,
                            more_left = NA, time = NA, con = NULL, par_anal = 3){
   
   if(more_left == 1){
-    message(name_1, " is more left than ", name_2)
+    cli::cli_alert_success("{name_1} ({pageid_1}) > {name_2} ({pageid_2})")
   } else if (more_left == -1 ) {
-    message(name_2, " is more left than ", name_1)
+    cli::cli_alert_success("{name_1} ({pageid_1}) < {name_2} ({pageid_2})")
   } else {
-    message(name_2, " and ", name_1, " have a similar position")
+    cli::cli_alert_success("{name_1} ({pageid_1}) = {name_2} ({pageid_2})")
   }
   
+  out_1 <- tibble::tibble(user, pageid_1, pageid_2, more_left, time = {{time}}, type = "user")
+  out_2 <- tibble::tibble(user, pageid_2 = pageid_1, pageid_1 = {{pageid_2}}, more_left = -more_left, time = {{time}}, type = "user")
+  out <- dplyr::bind_rows(out_1, out_2)
+  con %>% DBI::dbWriteTable("com", out, append = T)
+  
   solved <- con %>% 
-    pairwiseR::get_already(user) %>%
-    pairwiseR::get_analytically_solved(quiet = F, par = par_anal) %>%
+    get_already(user = {{user}}) %>%
+    pairwiseR::get_analytically_solved(quiet = F, par = {{par_anal}}) %>%
     dplyr::mutate(user = user, time = {{time}}, type = "auto")
   
-  out_1 <- tibble::tibble(user, pageid_1, pageid_2, more_left, time, type = "user")
-  out_2 <- tibble::tibble(user, pageid_2 = pageid_1, pageid_1 = {{pageid_2}}, more_left = -more_left, time, type = "user")
   
-  out <- dplyr::bind_rows(out_1, out_2, solved) 
+  con %>% DBI::dbWriteTable("com", solved, append = T)
   
-  con %>% DBI::dbWriteTable("com", out, append = T)
+  
 }
 
 #' get_analytically_solved
 #' @export
 
 get_analytically_solved <- function(already, quiet = T, par = 3){
+  
+  # if(!quiet){message("Analytical param: ", par)}
   
   inp <- already %>%
     dplyr::filter(more_left != 0) %>%
@@ -170,7 +176,7 @@ get_analytically_solved <- function(already, quiet = T, par = 3){
     ) %>%
     dplyr::select(dplyr::contains("pageid"), ideo) %>%
     dplyr::group_by(pageid_1, ideo) %>%
-    dplyr::filter(n() > par) %>%
+    dplyr::filter(n() >= {{par}}) %>%
     dplyr::ungroup() %>%
     unique %>%
     dplyr::group_by(pageid_1, ideo) %>%
@@ -178,17 +184,19 @@ get_analytically_solved <- function(already, quiet = T, par = 3){
     dplyr::ungroup() %>%
     tidyr::pivot_wider(id_cols = pageid_1, names_from = ideo, values_from = pageid_2)
   
+  
   if(nrow(inp) <= 1 | !"left" %in% colnames(inp) | !"right" %in% colnames(inp) ){return(tibble::tibble())}
   out <- tidyr::expand_grid(dplyr::select(inp, pageid_1, left), 
                             dplyr::select(inp, pageid_2 = pageid_1, right)) %>%
     dplyr::filter(pageid_1 != pageid_2) %>%
+    dplyr::filter_at(vars(left, right), ~!map_lgl(.x, is.null)) %>%
     dplyr::mutate(n_inter = purrr::map2_dbl(left, right, ~length(intersect(.x, .y)))) %>%
-    dplyr::filter(n_inter > par) %>%
+    dplyr::filter(n_inter >= {{par}}) %>%
     dplyr::select(contains("pageid")) %>%
     dplyr::mutate(more_left = -1) %>%
     dplyr::anti_join(already, by = c("pageid_1", "pageid_2"))
   
-  if(!quiet){message(glue::glue("Could discard {nrow(out)} analytically"))}
+  if(!quiet){cli::cli_alert_success("Analytically solved: {nrow(out) %/% 2}")}
   sym_out <- tibble::tibble(pageid_1 = out$pageid_2, 
                             pageid_2 = out$pageid_1, 
                             more_left = -out$more_left) 
@@ -222,26 +230,28 @@ remove_last_action <- function(con, user){
   
   com_time <- con %>%
     dplyr::tbl("com") %>%
-    dplyr::filter(user == !!user & type == "user") %>%
-    dplyr::filter(time == max(time, na.rm = T)) %>%
-    dplyr::collect()
+    dplyr::collect() %>%
+    dplyr::filter(user == !!user) %>%
+    mutate(time = round(time, 0)) %>%
+    # arrange(-time)
+    dplyr::filter(time == max(time, na.rm = T))
   
   
   dk_time <- con %>%
     dplyr::tbl("dk") %>%
+    dplyr::collect() %>%
     dplyr::filter(user == !!user) %>%
-    dplyr::filter(time == max(time, na.rm = T)) %>%
-    dplyr::collect()
+    dplyr::filter(time == max(time, na.rm = T)) 
   
   if(nrow(dk_time) == 0 & nrow(com_time) == 0){
-    message("No action to remove")
-    return("No action to remove")
+    cli::cli_alert_info("No action to cancel")
+    return("No action to cancel")
   }
   
   if(max(com_time$time, na.rm = T) > max(dk_time$time, na.rm = T)){
     
-    out <- glue::glue("Removing comparison between {pairwiseR::mp$name[ pairwiseR::mp$pageid == com_time$pageid_1[1]]} and {pairwiseR::mp$name[ pairwiseR::mp$pageid == com_time$pageid_2[1]]}")
-    message(glue::glue("Removing comparison between {com_time$pageid_1[1]} and {com_time$pageid_2[1]}"))
+    out <- glue::glue("Cancelling comparison between {pairwiseR::mp$name[ pairwiseR::mp$pageid == com_time$pageid_1[1]]} and {pairwiseR::mp$name[ pairwiseR::mp$pageid == com_time$pageid_2[1]]}")
+    cli::cli_alert_warning("Cancelling {com_time$pageid_1[1]} | {com_time$pageid_2[1]}")
     
     com_time %>%
       split(1:nrow(.)) %>% 
@@ -256,8 +266,8 @@ remove_last_action <- function(con, user){
     
   } else {
     
-    out <- glue::glue("Removing ignoring {pairwiseR::mp$name[ pairwiseR::mp$pageid == dk_time$pageid]}")
-    message(glue::glue("Removing ignoring {dk_time$pageid}"))
+    out <- glue::glue("Cancel ignoring {pairwiseR::mp$name[ pairwiseR::mp$pageid == dk_time$pageid]}")
+    cli::cli_alert_warning("Cancel ignoring {dk_time$pageid}")
     
     dk_time %>%
       split(1:nrow(.)) %>% 
