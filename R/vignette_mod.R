@@ -5,7 +5,8 @@ vignette_ui <- function(id){
   
   tagList(
     br(),
-    span("Welches dieser zwei Mitglieder des Bundestags vertritt die linkere Position?", style = "font-size:20px;"),
+    tags$h5("Welches dieser zwei Mitglieder des Bundestages vetritt eine linkere Position?", style = "font-size:20px;"),
+    br(),
     div(class = "sixteen wide column",
         a(class="ui fluid button action-button", id = ns("ab"), href = "#", 
           div(class="content",
@@ -41,10 +42,11 @@ vignette_ui <- function(id){
     br(),
     div(class = "ui buttons",style = "display: flex; justify-content: center; ",
   
-       actionButton(ns("ignore_a"), label = "Unbekannt", class = "big basic ui button"),
+       actionButton(ns("ignore_a"), label = "Unbekannt", class = "big basic grey ui button"),
        #actionButton(ns("ignore"), label = "Beide", class = "big ui button"),    
-       actionButton(ns("ignore_b"), label = "Unbekannt", class = "big basic ui button")
+       actionButton(ns("ignore_b"), label = "Unbekannt", class = "big basic grey ui button")
     ), 
+    br(),
     div(class = "ui buttons",style = "display: flex; justify-content: center; ",
   
        actionButton(ns("remove_last"), label = "Undo", class = "big basic grey ui button"),
@@ -118,6 +120,10 @@ vignette_server <- function(input, output, session, pair, user){
     con <- pairwiseR::init_db(user = user, path = "data/mp.db")
       removed <- con %>%
             remove_last_action(user = user)
+    
+      message(removed)
+      
+      shinytoastr::toastr_info(removed)
   })
   
   observeEvent(log$state, {
@@ -126,10 +132,10 @@ vignette_server <- function(input, output, session, pair, user){
     c("a", "b", "ab", "ignore_a", "ignore_b", "ignore") %>%
       walk(~{
         shinyjs::disable(.x)
-        shinyjs::delay(2000, shinyjs::enable(.x))
+        shinyjs::delay(1000, shinyjs::enable(.x))
       })
     
-    shinyjs::delay(2000, log$state <- "")
+    shinyjs::delay(1000, log$state <- "")
   })
   
   out <- eventReactive(log$state, {

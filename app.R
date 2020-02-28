@@ -5,13 +5,15 @@
 # devtools::install_github("systats/shinyuser")
 # install.packages("V8")
 
-
+n_mp <- 10
+n_comp_pro_user <- 5
 
 library(shiny)
 library(shiny.semantic)
 library(shinyjs)
 library(semantic.dashboard)
 library(tidyverse)
+library(shinytoastr)
 devtools::load_all()
 
 # library(dplyr)
@@ -36,6 +38,7 @@ ui <- shiny.semantic::semanticPage(
     #     inverted = T, 
     #     shinyuser::manager_ui("manager")
     # ),
+    shinytoastr::useToastr(),
     shinyjs::useShinyjs(),
     div(class = "ui text container",
         vignette_ui("action"),
@@ -81,30 +84,8 @@ server <- function(input, output, session){
             dplyr::filter(type == "user") %>%
             nrow
         #value <- nrow(get_already(con, user())) #%/% 2
-        shinyjs::runjs(glue::glue("$('#pro').progress({value: <value %/% 2>, total: 500});", .open = "<", .close = ">"))
+        shinyjs::runjs(glue::glue("$('#pro').progress({value: <value %/% 2>, total: <n_comp_pro_user>});", .open = "<", .close = ">"))
     })
-    
-    
-    
-    # ### Progress bar by user and party
-    # observe({
-    #     req(user())
-    #     action()
-    #     
-    #     total <- 300 # default
-    #     
-    #     res <- dplyr::src_sqlite("data/mp.db") %>%
-    #         dplyr::tbl("com") %>%
-    #         as_tibble() %>%
-    #         dplyr::filter(party == input$party) %>%
-    #         dplyr::filter(user == user()$username) %>%
-    #         nrow()
-    #     
-    #     times <- res %/% total
-    #     res <- res - times*total
-    #     
-    #     shinyjs::runjs(glue::glue("$('#global').progress({ value: <res>, total: <total>});", .open = "<", .close = ">"))
-    # })
     
     
     
@@ -121,7 +102,9 @@ server <- function(input, output, session){
         
         new_pair <- pairwiseR::get_new_pair(user = user()$username,
                                             con = con,
-                                            pair_mp = get_pair_matrix(pageid_1  = .GlobalEnv$next_pageid_1, pageid_2  = .GlobalEnv$next_pageid_2 ))
+                                            pair_mp = get_pair_matrix(n_mp = n_mp),
+                                            pageid_1  = .GlobalEnv$next_pageid_1, 
+                                            pageid_2  = .GlobalEnv$next_pageid_2 )
         return(new_pair)
     })
     
@@ -131,11 +114,24 @@ server <- function(input, output, session){
         req(action())
         req(user())
         
-        message(user()$user, " > ", action(), " > ", pageid = pair()$pageid_1, " ", pageid = pair()$pageid_2, "\n")
+        con <- pairwiseR::init_db(user = user()$username, path = "data/mp.db")
+        pair <- isolate(pair())
+        
+        if(con %>% get_already(user()$user) %>% nrow %>% magrittr::is_weakly_greater_than(n_comp_pro_user*2)){
+            shinytoastr::toastr_success("Danke für Ihre Teilnahme an unserer Umfrage. Wir werden uns bald melden, um den Vergütungsdetails zu regeln.")
+        }
+        if(is.null(pair$pageid_1)){
+            shinytoastr::toastr_success("Danke für Ihre Teilnahme an unserer Umfrage. Wir werden uns bald melden, um den Vergütungsdetails zu regeln.")
+        }
+        
+        if(!is.null(pair()$pageid_1)){
+            message(user()$user, " > ", action(), " > ", pageid = pair()$pageid_1, " ", pageid = pair()$pageid_2, "\n")
+        }
+        DBI::dbDisconnect(con) 
     })
     
     observeEvent(action(), {
-
+        
         if(!is.null(.GlobalEnv$next_pageid_1)){.GlobalEnv$next_pageid_1 <- NULL}
         if(!is.null(.GlobalEnv$next_pageid_2)){.GlobalEnv$next_pageid_2 <- NULL}
         
@@ -146,36 +142,38 @@ server <- function(input, output, session){
         #         remove_last_action(user = user()$username)
         # }
         
-        if(stringr::str_detect(action(), "ignore")){
-            if(stringr::str_detect(action(), "a")){
-                add_dont_know(user = user()$username, pageid = pair()$pageid_1, name = pair()$name_1, con = con)
-                .GlobalEnv$next_pageid_2 <- pair()$pageid_2
-            } else if(stringr::str_detect(action(), "b")){
-                add_dont_know(user = user()$username, pageid = pair()$pageid_2, name = pair()$name_2, con = con)
-                .GlobalEnv$next_pageid_1 <- pair()$pageid_1
-            } else {
-                add_dont_know(user = user()$username, pageid = pair()$pageid_1, name = pair()$name_1, con = con)
-                add_dont_know(user = user()$username, pageid = pair()$pageid_2, name = pair()$name_2, con = con)
+        if(!is.null(pair()$pageid_1)){
+            if(stringr::str_detect(action(), "ignore")){
+                if(stringr::str_detect(action(), "a")){
+                    add_dont_know(user = user()$username, pageid = pair()$pageid_1, name = pair()$name_1, con = con)
+                    .GlobalEnv$next_pageid_2 <- pair()$pageid_2
+                } else if(stringr::str_detect(action(), "b")){
+                    add_dont_know(user = user()$username, pageid = pair()$pageid_2, name = pair()$name_2, con = con)
+                    .GlobalEnv$next_pageid_1 <- pair()$pageid_1
+                } else {
+                    add_dont_know(user = user()$username, pageid = pair()$pageid_1, name = pair()$name_1, con = con)
+                    add_dont_know(user = user()$username, pageid = pair()$pageid_2, name = pair()$name_2, con = con)
+                }
+            }
+            
+            
+            if(stringr::str_detect(action(), "^(a|b)b?$")){
+                
+                if(action() == "a") outcome <- 1
+                if(action() == "b") outcome <- -1
+                if(action() == "ab") outcome <- 0
+                
+                add_comparison(user = user()$username,
+                               pageid_1 = pair()$pageid_1,
+                               pageid_2 = pair()$pageid_2,
+                               name_1 = pair()$name_1,
+                               pair()$name_2,
+                               more_left = outcome,
+                               time = lubridate::now(),
+                               con = con
+                )
             }
         }
-        
-        if(stringr::str_detect(action(), "^(a|b)b?$")){
-            
-            if(action() == "a") outcome <- 1
-            if(action() == "b") outcome <- -1
-            if(action() == "ab") outcome <- 0
-            
-            add_comparison(user = user()$username,
-                           pageid_1 = pair()$pageid_1,
-                           pageid_2 = pair()$pageid_2,
-                           name_1 = pair()$name_1,
-                           pair()$name_2,
-                           more_left = outcome,
-                           time = lubridate::now(),
-                           con = con
-            )
-        }
-        
         log$state <- 1
         log$state <- 0
     })
