@@ -31,7 +31,7 @@ add_user <- function(user, password){
 #' get_pair_matrix
 #' @export
 
-get_pair_matrix <- function(n_mp = NULL, pageid_1 = NULL, pageid_2 = NULL){
+get_pair_matrix <- function(n_mp = NULL){
   if(!is.null(n_mp)){
     tmp_mp <- pairwiseR::mp %>%
       arrange(desc(traffic)) %>%
@@ -44,21 +44,6 @@ get_pair_matrix <- function(n_mp = NULL, pageid_1 = NULL, pageid_2 = NULL){
     dplyr::filter(pageid_1 != pageid_2) %>%
     dplyr::left_join(dplyr::select(pairwiseR::mp, pageid_1 = pageid, name_1 = name), by = "pageid_1") %>%
     dplyr::left_join(dplyr::select(pairwiseR::mp, pageid_2 = pageid, name_2 = name), by = "pageid_2")
-  
-  if(!is.null(pageid_1) ){
-    if(pageid_1 %in% pair_mps$pageid_1){
-      pair_mps <- pair_mps %>%
-        filter(pageid_1 == !!pageid_1)
-    }
-  } else {
-    if(!is.null(pageid_2) ){
-      if(pageid_2 %in% pair_mps$pageid_2){
-        pair_mps <- pair_mps %>%
-          filter(pageid_2 == !!pageid_2)
-      }
-    }
-  }
-  
   
   return(pair_mps)
   
@@ -88,7 +73,7 @@ get_already <- function(con, user){
 #' get_new_pair
 #' @export
 
-get_new_pair <- function(user = NA, con = NA, pair_mp = NULL){
+get_new_pair <- function(user = NA, con = NA, pair_mp = NULL, pageid_1 = NULL, pageid_2 = NULL){
   
   dk <- con %>% pairwiseR::get_dk({{user}})
   already <- con %>% pairwiseR::get_already({{user}})
@@ -111,12 +96,25 @@ get_new_pair <- function(user = NA, con = NA, pair_mp = NULL){
     dplyr::filter(pageid_2 %in% to_include) %>%
     dplyr::mutate(party_1 = "", party_2 = "")
   
-  
-  
   if(nrow(new_pairs) == 0){
     message("All pairs have been coded")
     return(NULL)
   }
+  
+  if(!is.null(pageid_1) ){
+    if(pageid_1 %in% new_pairs$pageid_1){
+      new_pairs <- new_pairs %>%
+        filter(pageid_1 == !!pageid_1)
+    }
+  } else {
+    if(!is.null(pageid_2) ){
+      if(pageid_2 %in% new_pairs$pageid_2){
+        new_pairs <- new_pairs %>%
+          filter(pageid_2 == !!pageid_2)
+      }
+    }
+  }
+  
   
   return(dplyr::sample_n(new_pairs, 1))
 }
@@ -237,11 +235,12 @@ remove_last_action <- function(con, user){
   
   if(nrow(dk_time) == 0 & nrow(com_time) == 0){
     message("No action to remove")
-    return()
+    return("No action to remove")
   }
   
   if(max(com_time$time, na.rm = T) > max(dk_time$time, na.rm = T)){
     
+    out <- glue::glue("Removing comparison between {pairwiseR::mp$name[ pairwiseR::mp$pageid == com_time$pageid_1[1]]} and {pairwiseR::mp$name[ pairwiseR::mp$pageid == com_time$pageid_2[1]]}")
     message(glue::glue("Removing comparison between {com_time$pageid_1[1]} and {com_time$pageid_2[1]}"))
     
     com_time %>%
@@ -253,11 +252,12 @@ remove_last_action <- function(con, user){
         RSQLite::dbExecute(con, query)
       })
     
-    return(com_time)
+    return(out)
     
   } else {
     
-    message(glue::glue("Removing ingoring {dk_time$pageid}"))
+    out <- glue::glue("Removing ignoring {pairwiseR::mp$name[ pairwiseR::mp$pageid == dk_time$pageid]}")
+    message(glue::glue("Removing ignoring {dk_time$pageid}"))
     
     dk_time %>%
       split(1:nrow(.)) %>% 
@@ -267,7 +267,7 @@ remove_last_action <- function(con, user){
         RSQLite::dbExecute(con, query)
       })
     
-    return(dk_time)
+    return(out)
   }
 }
 
